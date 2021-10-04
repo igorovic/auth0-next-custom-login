@@ -1,5 +1,18 @@
 import NextAuth from "next-auth";
 import Auth0Provider from "next-auth/providers/auth0";
+import CredentialsProvider from "next-auth/providers/credentials";
+import { AuthenticationClient } from "auth0";
+/* import auth0js from "auth0-js";
+
+const auth0 = new auth0js.WebAuth({
+  domain: String(process.env.AUTH0_DOMAIN),
+  clientID: String(process.env.AUTH0_CLIENT_ID),
+}); */
+
+const auth0 = new AuthenticationClient({
+  domain: String(process.env.AUTH0_DOMAIN),
+  clientId: String(process.env.AUTH0_CLIENT_ID),
+});
 
 export default NextAuth({
   // Configure one or more authentication providers
@@ -9,8 +22,75 @@ export default NextAuth({
       clientSecret: String(process.env.AUTH0_CLIENT_SECRET),
       issuer: `https://${process.env.AUTH0_DOMAIN}`,
     }),
-    // ...add more providers here
+    CredentialsProvider({
+      // The name to display on the sign in form (e.g. 'Sign in with...')
+      name: "Credentials",
+      // The credentials is used to generate a suitable form on the sign in page.
+      // You can specify whatever fields you are expecting to be submitted.
+      // e.g. domain, username, password, 2FA token, etc.
+      // You can pass any HTML attribute to the <input> tag through the object.
+      credentials: {
+        username: { label: "Username", type: "text", placeholder: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials, req) {
+        const { username, password } = credentials as {
+          password: string;
+          username: string;
+        };
+        const xRealIp = req.headers["x-real-ip"];
+        let forwardedFor;
+        if (Array.isArray(xRealIp)) {
+          forwardedFor = xRealIp.join(",");
+        } else {
+          forwardedFor = xRealIp;
+        }
+
+        const R = await auth0.oauth?.passwordGrant(
+          {
+            realm: "Username-Password-Authentication",
+            username,
+            password,
+          },
+          {
+            forwardedFor,
+          }
+        );
+        console.log("sign in token", R);
+        let user = null;
+        if (R && R.access_token) {
+          const { sub, name, picture, email } = await auth0.users?.getInfo(
+            R.access_token
+          );
+          user = {
+            id: sub,
+            email,
+            name,
+            image: picture,
+            addon: "test hi there",
+          };
+        }
+        console.log(user);
+        return user;
+      },
+    }),
   ],
+  callbacks: {
+    async jwt({ token, user }) {
+      // Persist the OAuth access_token to the token right after signin
+      console.log("jwt callback", token, user);
+      if (user) {
+        token.addon = user.addon;
+      }
+      return token;
+    },
+    /* async session({ session, token, user }) {
+      console.log("session callback", session, token, user);
+      // Send properties to the client, like an access_token from a provider.
+      session.accessToken = token.accessToken;
+      return session;
+    }, */
+  },
   /* session: {
     jwt: true,
   }, */
