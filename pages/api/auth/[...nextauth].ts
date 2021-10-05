@@ -2,12 +2,18 @@ import NextAuth from "next-auth";
 import Auth0Provider from "next-auth/providers/auth0";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { AuthenticationClient } from "auth0";
-/* import auth0js from "auth0-js";
+import jwksClient from "jwks-rsa";
+import jwt, { JwtHeader, SigningKeyCallback } from "jsonwebtoken";
 
-const auth0 = new auth0js.WebAuth({
-  domain: String(process.env.AUTH0_DOMAIN),
-  clientID: String(process.env.AUTH0_CLIENT_ID),
-}); */
+var client = jwksClient({
+  jwksUri: `https://${String(process.env.AUTH0_DOMAIN)}/.well-known/jwks.json`,
+});
+function getKey(header: JwtHeader, callback: SigningKeyCallback) {
+  client.getSigningKey(header.kid, function (err, key) {
+    var signingKey = key.publicKey || key.rsaPublicKey;
+    callback(null, signingKey);
+  });
+}
 
 const auth0 = new AuthenticationClient({
   domain: String(process.env.AUTH0_DOMAIN),
@@ -23,17 +29,13 @@ export default NextAuth({
       issuer: `https://${process.env.AUTH0_DOMAIN}`,
     }),
     CredentialsProvider({
-      // The name to display on the sign in form (e.g. 'Sign in with...')
       name: "Credentials",
-      // The credentials is used to generate a suitable form on the sign in page.
-      // You can specify whatever fields you are expecting to be submitted.
-      // e.g. domain, username, password, 2FA token, etc.
-      // You can pass any HTML attribute to the <input> tag through the object.
       credentials: {
         username: { label: "Username", type: "text", placeholder: "email" },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials, req) {
+        let user = null;
         const { username, password } = credentials as {
           password: string;
           username: string;
@@ -42,35 +44,57 @@ export default NextAuth({
         let forwardedFor;
         if (Array.isArray(xRealIp)) {
           forwardedFor = xRealIp.join(",");
-        } else {
+        } else if (xRealIp) {
           forwardedFor = xRealIp;
         }
-
-        const R = await auth0.oauth?.passwordGrant(
-          {
-            realm: "Username-Password-Authentication",
-            username,
-            password,
-          },
-          {
-            forwardedFor,
-          }
-        );
-        console.log("sign in token", R);
-        let user = null;
-        if (R && R.access_token) {
-          const { sub, name, picture, email } = await auth0.users?.getInfo(
-            R.access_token
+        try {
+          const R = await auth0.oauth?.passwordGrant(
+            {
+              realm: "Username-Password-Authentication",
+              username,
+              password,
+            },
+            forwardedFor
+              ? {
+                  forwardedFor,
+                }
+              : {}
           );
-          user = {
-            id: sub,
-            email,
-            name,
-            image: picture,
-            addon: "test hi there",
-          };
+          console.log("sign in token", R);
+          if (R && R.id_token) {
+            const T = await new Promise((resolve) =>
+              jwt.verify(
+                R.id_token,
+                getKey,
+                { complete: true },
+                function (err, decoded) {
+                  if (err) {
+                    console.error(err);
+                  } else {
+                    resolve(decoded);
+                  }
+                }
+              )
+            );
+            console.log("T", T);
+          }
+
+          if (R && R.access_token) {
+            const { sub, name, picture, email } = await auth0.users?.getInfo(
+              R.access_token
+            );
+            user = {
+              id: sub,
+              email,
+              name,
+              image: picture,
+              addon: "test hi there",
+            };
+          }
+          console.log("user", user);
+        } catch (err) {
+          console.error(err);
         }
-        console.log(user);
         return user;
       },
     }),
@@ -78,7 +102,7 @@ export default NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       // Persist the OAuth access_token to the token right after signin
-      console.log("jwt callback", token, user);
+      //console.log("jwt callback", token, user);
       if (user) {
         token.addon = user.addon;
       }
