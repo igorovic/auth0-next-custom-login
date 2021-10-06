@@ -4,6 +4,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import { AuthenticationClient } from "auth0";
 import jwksClient from "jwks-rsa";
 import jwt, { JwtHeader, SigningKeyCallback } from "jsonwebtoken";
+import { JWT } from "next-auth/jwt";
 
 var client = jwksClient({
   jwksUri: `https://${String(process.env.AUTH0_DOMAIN)}/.well-known/jwks.json`,
@@ -60,23 +61,27 @@ export default NextAuth({
                 }
               : {}
           );
-          console.log("sign in token", R);
+          console.debug("sign in token", R);
+          let id_token: string | undefined;
+          let decoded_id_token: JWT;
           if (R && R.id_token) {
-            const T = await new Promise((resolve) =>
+            decoded_id_token = await new Promise((resolve) =>
               jwt.verify(
-                R.id_token,
+                String(R.id_token),
                 getKey,
                 { complete: true },
                 function (err, decoded) {
                   if (err) {
                     console.error(err);
                   } else {
+                    id_token = R.id_token;
+
                     resolve(decoded);
                   }
                 }
               )
             );
-            console.log("T", T);
+            console.debug("T", decoded_id_token);
           }
 
           if (R && R.access_token) {
@@ -88,7 +93,7 @@ export default NextAuth({
               email,
               name,
               image: picture,
-              addon: "test hi there",
+              id_token: decoded_id_token,
             };
           }
           console.log("user", user);
@@ -104,7 +109,7 @@ export default NextAuth({
       // Persist the OAuth access_token to the token right after signin
       //console.log("jwt callback", token, user);
       if (user) {
-        token.addon = user.addon;
+        token = user.id_token;
       }
       return token;
     },
